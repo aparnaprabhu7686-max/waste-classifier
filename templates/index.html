@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Waste Classifier</title>
+<style>
+  :root { --g:#2e7d32; --bg:#f3f7f3; --card:#fff; --ink:#1b2a1b; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--g); color:#fff; padding:18px 20px; }
+  header h1 { margin:0; font-size:1.3rem; }
+  header p { margin:4px 0 0; opacity:.85; font-size:.9rem; }
+  main { max-width:760px; margin:20px auto; padding:0 16px; }
+  .card { background:var(--card); border-radius:14px; padding:18px; box-shadow:0 2px 8px rgba(0,0,0,.07); margin-bottom:16px; }
+  video, #preview { width:100%; max-height:380px; object-fit:contain; background:#111; border-radius:10px; display:none; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; }
+  button, label.btn { background:var(--g); color:#fff; border:0; padding:11px 18px; border-radius:9px; font-size:.95rem; cursor:pointer; }
+  button.alt, label.btn.alt { background:#e3ece3; color:var(--g); }
+  button:disabled { opacity:.5; cursor:default; }
+  input[type=file] { display:none; }
+  #result { display:none; }
+  .label { font-size:2rem; font-weight:700; text-transform:capitalize; color:var(--g); }
+  .bar { height:10px; background:#e5eae5; border-radius:6px; overflow:hidden; margin:3px 0 10px; }
+  .bar > div { height:100%; background:var(--g); }
+  .err { color:#b3261e; }
+  small { color:#5b6b5b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>♻️ AI Smart Waste Classifier</h1>
+  <p>Take a photo of waste — plastic, paper, metal, glass or organic</p>
+</header>
+<main>
+  <div class="card">
+    <video id="video" autoplay playsinline muted></video>
+    <img id="preview" alt="preview">
+    <canvas id="canvas" hidden></canvas>
+    <div class="row">
+      <button id="startCam">📷 Open camera</button>
+      <button id="snap" class="alt" disabled>Capture</button>
+      <label class="btn alt">🖼️ Upload / take photo<input type="file" id="file" accept="image/*" capture="environment"></label>
+    </div>
+  </div>
+
+  <div class="card" id="result">
+    <small>Detected waste type</small>
+    <div class="label" id="rLabel"></div>
+    <div id="rConf"></div>
+    <p><b>Bin:</b> <span id="rBin"></span><br><b>Tip:</b> <span id="rTip"></span></p>
+    <div id="bars"></div>
+  </div>
+  <div class="card err" id="error" style="display:none"></div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const video = $('video'), preview = $('preview'), canvas = $('canvas');
+let stream = null;
+
+$('startCam').onclick = async () => {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = stream;
+    video.style.display = 'block'; preview.style.display = 'none';
+    $('snap').disabled = false;
+  } catch (e) { showError('Camera not available: ' + e.message + '. Use the upload button instead.'); }
+};
+
+$('snap').onclick = () => {
+  canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  canvas.toBlob(b => send(b), 'image/jpeg', 0.92);
+  stopCam();
+};
+
+$('file').onchange = e => { if (e.target.files[0]) { stopCam(); send(e.target.files[0]); } };
+
+function stopCam() {
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; video.style.display = 'none'; $('snap').disabled = true;
+}
+
+async function send(blob) {
+  $('error').style.display = 'none';
+  preview.src = URL.createObjectURL(blob); preview.style.display = 'block';
+  const fd = new FormData(); fd.append('image', blob, 'waste.jpg');
+  $('result').style.display = 'none';
+  try {
+    const res = await fetch('/predict', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) return showError(data.error || 'Prediction failed');
+    show(data);
+  } catch (e) { showError('Server error: ' + e.message); }
+}
+
+function show(d) {
+  $('rLabel').textContent = d.label;
+  $('rConf').innerHTML = '<small>Confidence: ' + (d.confidence * 100).toFixed(1) + '%</small>';
+  $('rBin').textContent = d.bin || '-'; $('rTip').textContent = d.tip || '-';
+  $('bars').innerHTML = d.predictions.map(p =>
+    `<div>${p.label} — ${(p.confidence*100).toFixed(1)}%</div><div class="bar"><div style="width:${p.confidence*100}%"></div></div>`).join('');
+  $('result').style.display = 'block';
+}
+function showError(m) { $('error').textContent = m; $('error').style.display = 'block'; }
+</script>
+</body>
+</html>
